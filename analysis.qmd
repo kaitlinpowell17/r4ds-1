@@ -1,5 +1,128 @@
 ---
 title: "Billboard Hot 100"
+Author: Kaitlin Powell
 format: html
+execute:
+  echo: false
 ---
 
+
+```{r}
+#| message: false
+library(tidyverse)
+```
+
+```{r}
+#| cache: true
+billboard <- read_csv("data/billboard.csv", show_col_types = FALSE)
+```
+
+```{r}
+billboard |>
+  filter(!is.na(wk1)) |>
+  ggplot(aes(x = wk1)) +
+  geom_histogram(binwidth = 10) +
+  labs(
+    x = "Week 1 ranking",
+    y = "Number of songs",
+    subtitle = paste("Number of values:", sum(!is.na(billboard$wk1)))
+  )
+```
+
+```{r}
+billboard |>
+  select(wk1, wk4, wk10, wk20, wk40, wk76) |>
+  pivot_longer(
+    cols = everything(),
+    names_to = "week",
+    values_to = "ranking"
+  ) |>
+  group_by(week) |>
+  summarize(
+    missing = sum(is.na(ranking)),
+    present = sum(!is.na(ranking))
+  )
+```
+
+```{r Last}
+billboard |>
+  filter(!is.na(wk20), if_all(wk21:wk76, is.na)) |>
+  summarize(
+    songs = n(),
+    ranked_below_50 = sum(wk20 > 50)
+  )
+```
+
+```{r}
+song_summary <- billboard |>
+  pivot_longer(
+    cols = starts_with("wk"),
+    names_to = "week",
+    names_prefix = "wk",
+    names_transform = list(week = as.integer),
+    values_to = "rank"
+  ) |>
+  group_by(artist, track, date.entered) |>
+  summarize(
+    first_rank = first(na.omit(rank)),
+    best_rank = min(rank, na.rm = TRUE),
+    first_week_at_best_rank = min(
+      week[!is.na(rank) & rank == min(rank, na.rm = TRUE)]
+    ),
+    total_weeks = sum(!is.na(rank)),
+    .groups = "drop"
+  )
+
+top_10_songs <- song_summary |>
+  filter(best_rank <= 10)
+
+top_10_trajectories <- billboard |>
+  pivot_longer(
+    cols = starts_with("wk"),
+    names_to = "week",
+    names_prefix = "wk",
+    names_transform = list(week = as.integer),
+    values_to = "rank"
+  ) |>
+  inner_join(
+    top_10_songs |> select(artist, track, date.entered),
+    by = c("artist", "track", "date.entered")
+  ) |>
+  mutate(
+    notable = case_when(
+      artist == "Madonna" & track == "Music" ~ "Madonna — Music",
+      artist == "Lonestar" & track == "Amazed" ~ "Lonestar — Amazed",
+      artist == "Creed" & track == "Higher" ~ "Creed — Higher",
+      TRUE ~ NA_character_
+    )
+  )
+
+top_10_trajectories |>
+  ggplot(aes(x = week, y = rank, group = interaction(artist, track))) +
+  geom_line(color = "gray75", na.rm = TRUE) +
+  geom_line(
+    data = top_10_trajectories |> filter(!is.na(notable)),
+    aes(color = notable),
+    linewidth = 1,
+    na.rm = TRUE
+  ) +
+  scale_y_reverse() +
+  labs(x = "Week", y = "Ranking", color = "Notable song")
+
+bind_rows(
+  top_10_songs |>
+    filter(best_rank == 1) |>
+    slice_min(first_week_at_best_rank, n = 1, with_ties = FALSE) |>
+    mutate(trajectory = "Fastest to number one"),
+  top_10_songs |>
+    filter(best_rank == 1) |>
+    slice_max(first_week_at_best_rank, n = 1, with_ties = FALSE) |>
+    mutate(trajectory = "Slowest to number one"),
+  top_10_songs |>
+    slice_max(total_weeks, n = 1, with_ties = FALSE) |>
+    mutate(trajectory = "Longest chart run")
+) |>
+  select(trajectory, artist, track, first_rank, best_rank,
+         first_week_at_best_rank, total_weeks) |>
+  print(width = Inf)
+```
